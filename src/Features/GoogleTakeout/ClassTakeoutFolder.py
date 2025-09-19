@@ -25,6 +25,7 @@ from packaging.version import Version
 from Core.CustomLogger import set_log_level
 from Core.CustomLogger import suppress_console_output_temporarily
 from Core.FolderAnalyzer import FolderAnalyzer
+from Core.ResumeManager import ResumeManager
 from Core.GlobalVariables import ARGS, LOG_LEVEL, LOGGER, START_TIME, FOLDERNAME_ALBUMS, FOLDERNAME_NO_ALBUMS, TIMESTAMP, SUPPLEMENTAL_METADATA, MSG_TAGS, SPECIAL_SUFFIXES, EDITTED_SUFFIXES, PHOTO_EXT, VIDEO_EXT, GPTH_VERSION, FOLDERNAME_GPTH, \
     PIL_SUPPORTED_EXTENSIONS, FOLDERNAME_EXIFTOOL
 from Features.LocalFolder.ClassLocalFolder import ClassLocalFolder  # Import ClassLocalFolder (Parent Class of this)
@@ -96,6 +97,9 @@ class ClassTakeoutFolder(ClassLocalFolder):
 
         # Create and init self.result dict
         self.result = init_process_results()
+
+        # Initialize Resume Manager
+        self.resume_manager = None  # Will be initialized when output folder is determined
 
         self.CLIENT_NAME = f'Google Takeout Folder ({self.takeout_folder.name})'
 
@@ -442,106 +446,178 @@ class ClassTakeoutFolder(ClassLocalFolder):
         """
         # Start the Process
         with (set_log_level(LOGGER, log_level)):  # Temporarily adjust log level
-            LOGGER.info(f"")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"🔢 TAKEOUT PROCESSING STARTED...")
-            LOGGER.info(f"================================================================================================================================================")
-            processing_start_time = datetime.now()
+            try:
+                LOGGER.info(f"")
+                LOGGER.info(f"================================================================================================================================================")
+                LOGGER.info(f"🔢 TAKEOUT PROCESSING STARTED...")
+                LOGGER.info(f"================================================================================================================================================")
+                processing_start_time = datetime.now()
 
-            if capture_output is None: capture_output=self.ARGS['show-gpth-info']
-            if capture_errors is None: capture_errors=self.ARGS['show-gpth-errors']
+                if capture_output is None: capture_output=self.ARGS['show-gpth-info']
+                if capture_errors is None: capture_errors=self.ARGS['show-gpth-errors']
 
-            # STEP 1: Pre-check the object with skip_process=True to just unzip files in case they are zipped
-            # ----------------------------------------------------------------------------------------------------------------------
-            self.pre_checks(log_level=log_level)
-
-
-            # STEP 2: Pre-Process Takeout folder
-            # ----------------------------------------------------------------------------------------------------------------------
-            self.step += 1
-            LOGGER.info(f"")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"{self.step}. PRE-PROCESSING TAKEOUT FOLDER...")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"")
-            if not self.ARGS['google-skip-preprocess']:
-                # Call pre_process() with the same log_level as process()
-                self.pre_process(log_level=log_level)
-            else:
-                step_name = '🪛 [PRE-PROCESS] : '
-                formatted_duration = f"Skipped"
-                LOGGER.info(f"{step_name}Step Skipped: '{step_name[step_name.rfind('[')+1 : step_name.rfind(']')].strip()}'")
-                self.steps_duration.append({'step_id': self.step, 'step_name': step_name, 'duration': formatted_duration})
-
-
-            # STEP 3: Analyze initial files in Takeout Folder before to process with GPTH and modify any original file
-            # ----------------------------------------------------------------------------------------------------------------------
-            self.step += 1
-            # Determine the input_folder depending on if the Takeout have been unzipped or not
-            input_folder = self.get_input_folder()
-            step_name = '🔢 [PRE]-[Analyze Takeout] : '
-            LOGGER.info(f"")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"{self.step}. ANALYZING INITIAL TAKEOUT FILES... ")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"")
-            self.analyze_folder(folder_to_analyze=input_folder, folder_type='input', step_name=step_name)
-            # ----------------------------------------------------------------------------------------------------------------------
-
-
-            # STEP 4: Process Input Takeout folder
-            # ----------------------------------------------------------------------------------------------------------------------
-            self.step += 1
-            self.substep = 0
-            LOGGER.info(f"")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"{self.step}. PROCESS INPUT TAKEOUT FOLDER...")
-            LOGGER.info(f"================================================================================================================================================")
-            # --------------------------------------------------------------------------------------------------------------------------------------------------------
-            # DETERMINE BASIC FOLDERS AND INIT SUPER CLASS
-            # This need to be done after Pre-checks because if takeout folders have been unzipped, the input_folder, output_folder and albums_folder need to be updated
-            # --------------------------------------------------------------------------------------------------------------------------------------------------------
-            # If the user have passed an output_folder directly to the process() method, then update the object with this output_folder
-            if output_folder:
-                self.output_folder = output_folder
-            # Determine the output_folder if it has not been given in the call to process() method
-            output_folder = self.get_output_folder()
-            # Determine the input_folder depending on if the Takeout have been unzipped or not
-            input_folder = self.get_input_folder()
-            # Determine where the Albums will be located
-            albums_folder = self.get_albums_folder()
-
-            # Sub-Step 4.1: Process photos with GPTH tool
-            # ----------------------------------------------------------------------------------------------------------------------
-            step_name = '🧠 [PROCESS]-[Metadata Processing] : '
-            step_name_cleaned = ' '.join(step_name.replace(' : ', '').split()).replace(' ]', ']')
-            self.substep += 1
-            step_start_time = datetime.now()
-            sub_step_start_time = datetime.now()
-            LOGGER.info(f"")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"{self.step}.{self.substep}. FIXING PHOTOS METADATA WITH GPTH TOOL...")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"")
-            if not self.ARGS['google-skip-gpth-tool']:
-                LOGGER.info(f"{step_name}⏳ This process may take long time, depending on how big is your Takeout. Be patient... 🙂")
-                if self.ARGS['google-ignore-check-structure']:
-                    LOGGER.warning(f"{step_name}Google Takeout Structure detected ('-gics, --google-ignore-check-structure' flag detected).")
+                # Initialize output folder and resume manager
+                if output_folder:
+                    self.output_folder = output_folder
+                output_folder = self.get_output_folder()
+                
+                # Initialize Resume Manager
+                self.resume_manager = ResumeManager(output_folder, log_level=log_level)
+                
+                # Check if resume is requested and possible
+                resume_requested = self.ARGS.get('google-resume', False)
+                can_resume = self.resume_manager.can_resume()
+                
+                if resume_requested and can_resume:
+                    LOGGER.info(f"")
+                    LOGGER.info(f"🔄 RESUMING PREVIOUS PROCESSING SESSION...")
+                    LOGGER.info(f"================================================================================================================================================")
+                    
+                    # Load previous state and show resume summary
+                    self.resume_manager.load_state()
+                    resume_summary = self.resume_manager.get_resume_summary()
+                    
+                    LOGGER.info(f"📋 Resume Summary:")
+                    LOGGER.info(f"   Input Folder    : {resume_summary['input_folder']}")
+                    LOGGER.info(f"   Output Folder   : {resume_summary['output_folder']}")
+                    LOGGER.info(f"   Started At      : {resume_summary['start_time']}")
+                    LOGGER.info(f"   Last Update     : {resume_summary['last_update']}")
+                    LOGGER.info(f"   Progress        : {resume_summary['progress']}")
+                    LOGGER.info(f"")
+                    LOGGER.info(f"✅ Completed Steps:")
+                    for step in resume_summary['completed_steps']:
+                        LOGGER.info(f"     {step}")
+                    LOGGER.info(f"")
+                    LOGGER.info(f"⏭️  Next Step      : {resume_summary['next_step']}")
+                    LOGGER.info(f"")
+                    
+                    # Restore step counters from state
+                    self.step = self.resume_manager.state.get("current_step", 0)
+                    self.substep = self.resume_manager.state.get("current_substep", 0)
+                    self.steps_duration = self.resume_manager.state.get("steps_duration", [])
+                    
+                elif resume_requested and not can_resume:
+                    LOGGER.warning(f"")
+                    LOGGER.warning(f"⚠️  Resume was requested but cannot be performed:")
+                    LOGGER.warning(f"   - Output folder may not exist or be empty: {output_folder}")
+                    LOGGER.warning(f"   - No valid state file found or processing was already completed")
+                    LOGGER.warning(f"   Starting fresh processing instead...")
+                    LOGGER.warning(f"")
+                    self.resume_manager.start_processing(self.get_input_folder())
+                    
                 else:
-                    if not self.needs_process:
-                        LOGGER.warning(f"{step_name}No Takeout structure detected in input folder. The tool will process the folder ignoring Takeout structure.")
-                        self.ARGS['google-ignore-check-structure'] = True
-                        # Determine the output_folder again because when elf.ARGS['google-ignore-check-structure'] = True, the output_folder is different
-                        output_folder = self.get_output_folder()
+                    # Normal processing - start fresh
+                    self.resume_manager.start_processing(self.get_input_folder())
 
-                # Now Call GPTH Tool
-                ok = fix_metadata_with_gpth_tool(
-                    input_folder=self.input_folder,
-                    output_folder=output_folder,
-                    capture_output=capture_output,
-                    capture_errors=capture_errors,
-                    print_messages=print_messages,
-                    no_symbolic_albums=self.ARGS['google-no-symbolic-albums'],
+                # STEP 1: Pre-check the object with skip_process=True to just unzip files in case they are zipped
+                # ----------------------------------------------------------------------------------------------------------------------
+                if not self.resume_manager.is_step_completed(1):
+                    self.pre_checks(log_level=log_level)
+                    self.resume_manager.step_completed(1, "Pre-checks")
+                else:
+                    LOGGER.info(f"")
+                    LOGGER.info(f"⏭️  STEP 1: Pre-checks already completed, skipping...")
+
+                # STEP 2: Pre-Process Takeout folder
+                # ----------------------------------------------------------------------------------------------------------------------
+                if not self.resume_manager.is_step_completed(2):
+                    self.step += 1
+                    LOGGER.info(f"")
+                    LOGGER.info(f"================================================================================================================================================")
+                    LOGGER.info(f"{self.step}. PRE-PROCESSING TAKEOUT FOLDER...")
+                    LOGGER.info(f"================================================================================================================================================")
+                    LOGGER.info(f"")
+                    if not self.ARGS['google-skip-preprocess']:
+                        # Call pre_process() with the same log_level as process()
+                        self.pre_process(log_level=log_level)
+                    else:
+                        step_name = '🪛 [PRE-PROCESS] : '
+                        formatted_duration = f"Skipped"
+                        LOGGER.info(f"{step_name}Step Skipped: '{step_name[step_name.rfind('[')+1 : step_name.rfind(']')].strip()}'")
+                        self.steps_duration.append({'step_id': self.step, 'step_name': step_name, 'duration': formatted_duration})
+                    
+                    self.resume_manager.step_completed(2, "Pre-processing")
+                else:
+                    self.step += 1
+                    LOGGER.info(f"")
+                    LOGGER.info(f"⏭️  STEP 2: Pre-processing already completed, skipping...")
+
+
+                # STEP 3: Analyze initial files in Takeout Folder before to process with GPTH and modify any original file
+                # ----------------------------------------------------------------------------------------------------------------------
+                if not self.resume_manager.is_step_completed(3):
+                    self.step += 1
+                    # Determine the input_folder depending on if the Takeout have been unzipped or not
+                    input_folder = self.get_input_folder()
+                    step_name = '🔢 [PRE]-[Analyze Takeout] : '
+                    LOGGER.info(f"")
+                    LOGGER.info(f"================================================================================================================================================")
+                    LOGGER.info(f"{self.step}. ANALYZING INITIAL TAKEOUT FILES... ")
+                    LOGGER.info(f"================================================================================================================================================")
+                    LOGGER.info(f"")
+                    self.analyze_folder(folder_to_analyze=input_folder, folder_type='input', step_name=step_name)
+                    self.resume_manager.step_completed(3, "Analyze input files")
+                else:
+                    self.step += 1
+                    input_folder = self.get_input_folder()
+                    LOGGER.info(f"")
+                    LOGGER.info(f"⏭️  STEP 3: Input file analysis already completed, skipping...")
+                # ----------------------------------------------------------------------------------------------------------------------
+
+                # STEP 4: Process Input Takeout folder
+                # ----------------------------------------------------------------------------------------------------------------------
+                if not self.resume_manager.is_step_completed(4):
+                    self.step += 1
+                    self.substep = 0
+                    LOGGER.info(f"")
+                    LOGGER.info(f"================================================================================================================================================")
+                    LOGGER.info(f"{self.step}. PROCESS INPUT TAKEOUT FOLDER...")
+                    LOGGER.info(f"================================================================================================================================================")
+                # --------------------------------------------------------------------------------------------------------------------------------------------------------
+                # DETERMINE BASIC FOLDERS AND INIT SUPER CLASS
+                # This need to be done after Pre-checks because if takeout folders have been unzipped, the input_folder, output_folder and albums_folder need to be updated
+                # --------------------------------------------------------------------------------------------------------------------------------------------------------
+                # If the user have passed an output_folder directly to the process() method, then update the object with this output_folder
+                if output_folder:
+                    self.output_folder = output_folder
+                # Determine the output_folder if it has not been given in the call to process() method
+                output_folder = self.get_output_folder()
+                # Determine the input_folder depending on if the Takeout have been unzipped or not
+                input_folder = self.get_input_folder()
+                # Determine where the Albums will be located
+                albums_folder = self.get_albums_folder()
+
+                # Sub-Step 4.1: Process photos with GPTH tool
+                # ----------------------------------------------------------------------------------------------------------------------
+                step_name = '🧠 [PROCESS]-[Metadata Processing] : '
+                step_name_cleaned = ' '.join(step_name.replace(' : ', '').split()).replace(' ]', ']')
+                self.substep += 1
+                step_start_time = datetime.now()
+                sub_step_start_time = datetime.now()
+                LOGGER.info(f"")
+                LOGGER.info(f"================================================================================================================================================")
+                LOGGER.info(f"{self.step}.{self.substep}. FIXING PHOTOS METADATA WITH GPTH TOOL...")
+                LOGGER.info(f"================================================================================================================================================")
+                LOGGER.info(f"")
+                if not self.ARGS['google-skip-gpth-tool']:
+                    LOGGER.info(f"{step_name}⏳ This process may take long time, depending on how big is your Takeout. Be patient... 🙂")
+                    if self.ARGS['google-ignore-check-structure']:
+                        LOGGER.warning(f"{step_name}Google Takeout Structure detected ('-gics, --google-ignore-check-structure' flag detected).")
+                    else:
+                        if not self.needs_process:
+                            LOGGER.warning(f"{step_name}No Takeout structure detected in input folder. The tool will process the folder ignoring Takeout structure.")
+                            self.ARGS['google-ignore-check-structure'] = True
+                            # Determine the output_folder again because when elf.ARGS['google-ignore-check-structure'] = True, the output_folder is different
+                            output_folder = self.get_output_folder()
+
+                    # Now Call GPTH Tool
+                    ok = fix_metadata_with_gpth_tool(
+                        input_folder=self.input_folder,
+                        output_folder=output_folder,
+                        capture_output=capture_output,
+                        capture_errors=capture_errors,
+                        print_messages=print_messages,
+                        no_symbolic_albums=self.ARGS['google-no-symbolic-albums'],
                     skip_extras=self.ARGS['google-skip-extras-files'],
                     keep_takeout_folder=self.ARGS['google-keep-takeout-folder'],
                     ignore_takeout_structure=self.ARGS['google-ignore-check-structure'],
@@ -605,63 +681,96 @@ class ClassTakeoutFolder(ClassLocalFolder):
                 LOGGER.info(f"{step_name}Step Skipped: '{step_name[step_name.rfind('[') + 1: step_name.rfind(']')].strip()}'")
             self.steps_duration.append({'step_id': f"{self.step}.{self.substep}", 'step_name': step_name_cleaned, 'duration': formatted_duration})
 
-            # Finally show TOTAL DURATION OF PROCESSING PHASE
-            step_end_time = datetime.now()
-            formatted_duration = str(timedelta(seconds=round((step_end_time - step_start_time).total_seconds())))
-            step_name = '🧠 [PROCESS] : '
-            LOGGER.info(f"")
-            LOGGER.info(f"{step_name}Step {self.step} completed in {formatted_duration}.")
-            # Índice self.substep posiciones antes del final
-            idx = len(self.steps_duration) - self.substep
-            if idx < 0:  idx = 0  # si la lista tiene menos de self.substep elementos, lo ponemos al inicio
-            # Insertamos ahí el nuevo registro (sin sobrescribir ninguno)
-            self.steps_duration.insert(idx, {'step_id': self.step, 'step_name': step_name + '-[TOTAL DURATION]', 'duration': formatted_duration})
+                # Finally show TOTAL DURATION OF PROCESSING PHASE
+                step_end_time = datetime.now()
+                formatted_duration = str(timedelta(seconds=round((step_end_time - step_start_time).total_seconds())))
+                step_name = '🧠 [PROCESS] : '
+                LOGGER.info(f"")
+                LOGGER.info(f"{step_name}Step {self.step} completed in {formatted_duration}.")
+                # Índice self.substep posiciones antes del final
+                idx = len(self.steps_duration) - self.substep
+                if idx < 0:  idx = 0  # si la lista tiene menos de self.substep elementos, lo ponemos al inicio
+                # Insertamos ahí el nuevo registro (sin sobrescribir ninguno)
+                self.steps_duration.insert(idx, {'step_id': self.step, 'step_name': step_name + '-[TOTAL DURATION]', 'duration': formatted_duration})
+                
+                self.resume_manager.step_completed(4, "GPTH processing and metadata fixing")
+            else:
+                self.step += 1
+                # When resuming, we still need to ensure we have the correct folder paths
+                if output_folder:
+                    self.output_folder = output_folder
+                output_folder = self.get_output_folder()
+                input_folder = self.get_input_folder()
+                albums_folder = self.get_albums_folder()
+                LOGGER.info(f"")
+                LOGGER.info(f"⏭️  STEP 4: GPTH processing already completed, skipping...")
 
 
             # STEP 5: Analyze final files in Output Folder after processed with GPTH
             # ----------------------------------------------------------------------------------------------------------------------
-            self.step += 1
-            # Determine the input_folder depending on if the Takeout have been unzipped or not
-            input_folder = self.get_input_folder()
-            step_name = '🔢 [POST]-[Analyze Output] : '
-            LOGGER.info(f"")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"{self.step}. ANALYZING OUTPUT FILES... ")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"")
-            # Call analyze_folder to invoke FolderAnalyzer class with the selected folder_to_analyze
-            self.analyze_folder(folder_to_analyze=output_folder, folder_type='output', step_name=step_name, save_json=False)
+            if not self.resume_manager.is_step_completed(5):
+                self.step += 1
+                # Determine the input_folder depending on if the Takeout have been unzipped or not
+                input_folder = self.get_input_folder()
+                step_name = '🔢 [POST]-[Analyze Output] : '
+                LOGGER.info(f"")
+                LOGGER.info(f"================================================================================================================================================")
+                LOGGER.info(f"{self.step}. ANALYZING OUTPUT FILES... ")
+                LOGGER.info(f"================================================================================================================================================")
+                LOGGER.info(f"")
+                # Call analyze_folder to invoke FolderAnalyzer class with the selected folder_to_analyze
+                self.analyze_folder(folder_to_analyze=output_folder, folder_type='output', step_name=step_name, save_json=False)
+                self.resume_manager.step_completed(5, "Analyze output files")
+            else:
+                self.step += 1
+                input_folder = self.get_input_folder()
+                LOGGER.info(f"")
+                LOGGER.info(f"⏭️  STEP 5: Output file analysis already completed, skipping...")
             # ----------------------------------------------------------------------------------------------------------------------
 
 
             # STEP 6: Post Process Output folder
             # ----------------------------------------------------------------------------------------------------------------------
-            # Increment self.step for the Post Process Steps
-            self.step += 1
-            LOGGER.info(f"")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"{self.step}. POST-PROCESSING OUTPUT FOLDER...")
-            LOGGER.info(f"================================================================================================================================================")
-            if not self.ARGS['google-skip-postprocess']:
-                # Now call the post_process() function
-                self.post_process(input_folder=input_folder, output_folder=output_folder, albums_folder=albums_folder, log_level=log_level)
-            else:
+            if not self.resume_manager.is_step_completed(6):
+                # Increment self.step for the Post Process Steps
+                self.step += 1
                 LOGGER.info(f"")
-                step_name = '✅ [POST-PROCESS] : '
-                formatted_duration = f"Skipped"
-                LOGGER.info(f"{step_name}Step Skipped: '{step_name[step_name.rfind('[')+1 : step_name.rfind(']')].strip()}'")
-                self.steps_duration.append({'step_id': self.step, 'step_name': step_name, 'duration': formatted_duration})
+                LOGGER.info(f"================================================================================================================================================")
+                LOGGER.info(f"{self.step}. POST-PROCESSING OUTPUT FOLDER...")
+                LOGGER.info(f"================================================================================================================================================")
+                if not self.ARGS['google-skip-postprocess']:
+                    # Now call the post_process() function
+                    self.post_process(input_folder=input_folder, output_folder=output_folder, albums_folder=albums_folder, log_level=log_level)
+                else:
+                    LOGGER.info(f"")
+                    step_name = '✅ [POST-PROCESS] : '
+                    formatted_duration = f"Skipped"
+                    LOGGER.info(f"{step_name}Step Skipped: '{step_name[step_name.rfind('[')+1 : step_name.rfind(']')].strip()}'")
+                    self.steps_duration.append({'step_id': self.step, 'step_name': step_name, 'duration': formatted_duration})
+                
+                self.resume_manager.step_completed(6, "Post-processing")
+            else:
+                self.step += 1
+                LOGGER.info(f"")
+                LOGGER.info(f"⏭️  STEP 6: Post-processing already completed, skipping...")
 
 
             # STEP 7: Final Steps
             # ----------------------------------------------------------------------------------------------------------------------
-            # Increment self.step for the Post Process Steps
-            self.step += 1
-            LOGGER.info(f"")
-            LOGGER.info(f"================================================================================================================================================")
-            LOGGER.info(f"{self.step}. FINAL STEPS...")
-            LOGGER.info(f"================================================================================================================================================")
-            self.final_steps(input_folder=input_folder, output_folder=output_folder)
+            if not self.resume_manager.is_step_completed(7):
+                # Increment self.step for the Post Process Steps
+                self.step += 1
+                LOGGER.info(f"")
+                LOGGER.info(f"================================================================================================================================================")
+                LOGGER.info(f"{self.step}. FINAL STEPS...")
+                LOGGER.info(f"================================================================================================================================================")
+                self.final_steps(input_folder=input_folder, output_folder=output_folder)
+                
+                self.resume_manager.step_completed(7, "Final steps")
+            else:
+                self.step += 1
+                LOGGER.info(f"")
+                LOGGER.info(f"⏭️  STEP 7: Final steps already completed, skipping...")
 
 
             # FINISH & PRINT RESULTS
@@ -891,7 +1000,21 @@ class ClassTakeoutFolder(ClassLocalFolder):
             if create_localfolder_object:
                 super().__init__(output_folder)
 
-            return self.result
+                # Mark processing as completed and clean up state file
+                if self.resume_manager:
+                    self.resume_manager.mark_completed()
+                    self.resume_manager.cleanup_state_file()
+                    LOGGER.info(f"✅ Processing completed successfully. Resume state cleaned up.")
+
+                return self.result
+                
+            except Exception as e:
+                # Handle any errors that occur during processing
+                LOGGER.error(f"❌ Processing failed with error: {str(e)}")
+                if self.resume_manager:
+                    self.resume_manager.mark_error(str(e))
+                    LOGGER.error(f"💾 Error state saved for potential resume. Use --google-resume flag to continue from where it stopped.")
+                raise
 
 
     def post_process(self, input_folder=None, output_folder=None, albums_folder=None, log_level=None):

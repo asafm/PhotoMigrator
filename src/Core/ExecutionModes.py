@@ -153,6 +153,7 @@ def mode_google_takeout(user_confirmation=True, log_level=None):
     LOGGER.info(f"Settings for Google Takeout Photos Feature:")
     LOGGER.info(f"-------------------------------------------")
     LOGGER.info(f"Using Suffix                              : '{ARGS['google-output-folder-suffix']}'")
+    LOGGER.info(f"Resume Processing                         : '{ARGS.get('google-resume', False)}'")
     LOGGER.info(f"Albums Folder Structure                   : '{ARGS['google-albums-folders-structure']}'")
     LOGGER.info(f"No Albums Folder Structure                : '{ARGS['google-no-albums-folders-structure']}'")
     LOGGER.info(f"No Creates symbolic links for Albums      : '{ARGS['google-no-symbolic-albums']}'")
