@@ -162,6 +162,7 @@ def parse_arguments():
                           "\nThis argument is mandatory to run the Google Takeout Processor Feature."
                         )
     PARSER.add_argument("-gofs", "--google-output-folder-suffix", metavar="<SUFFIX>", default="processed", help="Specify the suffix for the output folder. Default: 'processed'")
+    PARSER.add_argument("-gResume", "--google-resume", action="store_true", help="Resume processing from a previous incomplete run. This will automatically detect if the output folder from a previous execution exists and continue processing from where it stopped.")
     PARSER.add_argument("-gafs", "--google-albums-folders-structure",
                         metavar=f"{choices_for_folder_structure}",
                         default="flatten",

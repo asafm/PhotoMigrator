@@ -221,3 +221,10 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# Test files
+test_resume_functionality.py
+simplified_resume_example.py
+
+# Resume state files (these should not be committed)
+processing_state.json
+
