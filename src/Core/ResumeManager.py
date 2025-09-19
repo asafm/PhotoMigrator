@@ -19,6 +19,18 @@ from Core.CustomLogger import set_log_level
 from Core.GlobalVariables import LOGGER, FOLDERNAME_LOGS
 
 
+def safe_set_log_level(logger, level):
+    """Safe wrapper for set_log_level that handles None logger."""
+    if logger and hasattr(set_log_level, '__call__'):
+        try:
+            return set_log_level(logger, level)
+        except:
+            pass
+    # Return a dummy context manager if set_log_level fails
+    from contextlib import nullcontext
+    return nullcontext()
+
+
 class ResumeManager:
     """Manages resume functionality for Google Takeout processing."""
     
@@ -43,7 +55,7 @@ class ResumeManager:
             output_folder (str): Path to the output folder where state will be saved
             log_level: Logging level for this operation
         """
-        with set_log_level(LOGGER, log_level):
+        with safe_set_log_level(LOGGER, log_level):
             self.output_folder = Path(output_folder)
             self.state_file = self.output_folder / self.STATE_FILENAME
             self.log_level = log_level
@@ -71,51 +83,59 @@ class ResumeManager:
         Returns:
             bool: True if resume is possible, False otherwise
         """
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             # Check if output folder exists and has content
             if not self.output_folder.exists():
-                LOGGER.debug(f"Resume not possible: output folder does not exist: {self.output_folder}")
+                if LOGGER:
+                    if LOGGER: LOGGER.debug(f"Resume not possible: output folder does not exist: {self.output_folder}")
                 return False
                 
             # Check if output folder has any files (not just the state file)
             folder_contents = list(self.output_folder.iterdir())
             if not folder_contents or (len(folder_contents) == 1 and folder_contents[0].name == self.STATE_FILENAME):
-                LOGGER.debug(f"Resume not possible: output folder is empty or contains only state file: {self.output_folder}")
+                if LOGGER:
+                    if LOGGER: LOGGER.debug(f"Resume not possible: output folder is empty or contains only state file: {self.output_folder}")
                 return False
             
             # Check if state file exists and is valid
             if not self.state_file.exists():
-                LOGGER.debug(f"Resume not possible: no state file found: {self.state_file}")
+                if LOGGER:
+                    if LOGGER: LOGGER.debug(f"Resume not possible: no state file found: {self.state_file}")
                 return False
                 
             try:
                 self.load_state()
                 if self.state.get("processing_complete", False):
-                    LOGGER.debug("Resume not possible: previous processing was completed successfully")
+                    if LOGGER:
+                        if LOGGER: LOGGER.debug("Resume not possible: previous processing was completed successfully")
                     return False
                     
-                LOGGER.info(f"Resume possible: found incomplete processing in {self.output_folder}")
+                if LOGGER:
+                    if LOGGER: LOGGER.info(f"Resume possible: found incomplete processing in {self.output_folder}")
                 return True
                 
             except Exception as e:
-                LOGGER.warning(f"Resume not possible: could not load state file: {e}")
+                if LOGGER:
+                    if LOGGER: LOGGER.warning(f"Resume not possible: could not load state file: {e}")
                 return False
     
     def load_state(self):
         """Load processing state from file."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             try:
                 with open(self.state_file, 'r', encoding='utf-8') as f:
                     loaded_state = json.load(f)
                     self.state.update(loaded_state)
-                LOGGER.debug(f"State loaded from {self.state_file}")
+                if LOGGER:
+                    if LOGGER: LOGGER.debug(f"State loaded from {self.state_file}")
             except (FileNotFoundError, json.JSONDecodeError, PermissionError) as e:
-                LOGGER.warning(f"Could not load state file {self.state_file}: {e}")
+                if LOGGER:
+                    if LOGGER: LOGGER.warning(f"Could not load state file {self.state_file}: {e}")
                 raise
     
     def save_state(self):
         """Save current processing state to file."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             self.state["last_update"] = datetime.now().isoformat()
             
             # Ensure output folder exists
@@ -124,13 +144,15 @@ class ResumeManager:
             try:
                 with open(self.state_file, 'w', encoding='utf-8') as f:
                     json.dump(self.state, f, indent=2, ensure_ascii=False)
-                LOGGER.debug(f"State saved to {self.state_file}")
+                if LOGGER:
+                    if LOGGER: LOGGER.debug(f"State saved to {self.state_file}")
             except (PermissionError, OSError) as e:
-                LOGGER.error(f"Could not save state file {self.state_file}: {e}")
+                if LOGGER:
+                    if LOGGER: LOGGER.error(f"Could not save state file {self.state_file}: {e}")
     
     def start_processing(self, input_folder):
         """Initialize state for new processing run."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             self.state.update({
                 "start_time": datetime.now().isoformat(),
                 "input_folder": str(input_folder),
@@ -143,11 +165,12 @@ class ResumeManager:
                 "steps_duration": []
             })
             self.save_state()
-            LOGGER.info(f"Started new processing session for input: {input_folder}")
+            if LOGGER:
+                if LOGGER: LOGGER.info(f"Started new processing session for input: {input_folder}")
     
     def step_completed(self, step_number, step_name="", duration=""):
         """Mark a step as completed."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             if step_number not in self.state["completed_steps"]:
                 self.state["completed_steps"].append(step_number)
                 
@@ -162,11 +185,11 @@ class ResumeManager:
                 })
             
             self.save_state()
-            LOGGER.debug(f"Step {step_number} marked as completed: {step_name}")
+            if LOGGER: LOGGER.debug(f"Step {step_number} marked as completed: {step_name}")
     
     def substep_completed(self, step_number, substep_number, step_name="", duration=""):
         """Mark a substep as completed."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             self.state["current_step"] = step_number
             self.state["current_substep"] = substep_number
             
@@ -179,7 +202,7 @@ class ResumeManager:
                 })
             
             self.save_state()
-            LOGGER.debug(f"Substep {step_number}.{substep_number} completed: {step_name}")
+            if LOGGER: LOGGER.debug(f"Substep {step_number}.{substep_number} completed: {step_name}")
     
     def is_step_completed(self, step_number):
         """Check if a step has been completed."""
@@ -187,7 +210,7 @@ class ResumeManager:
     
     def get_next_step(self):
         """Get the next step that needs to be processed."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             completed = set(self.state.get("completed_steps", []))
             
             for step_num in sorted(self.STEPS.keys()):
@@ -198,29 +221,29 @@ class ResumeManager:
     
     def mark_completed(self):
         """Mark processing as successfully completed."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             self.state.update({
                 "processing_complete": True,
                 "current_step": len(self.STEPS),
                 "last_update": datetime.now().isoformat()
             })
             self.save_state()
-            LOGGER.info("Processing marked as completed successfully")
+            if LOGGER: LOGGER.info("Processing marked as completed successfully")
     
     def mark_error(self, error_message):
         """Mark processing as failed due to error."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             self.state.update({
                 "error_occurred": True,
                 "error_message": str(error_message),
                 "last_update": datetime.now().isoformat()
             })
             self.save_state()
-            LOGGER.error(f"Processing marked as failed: {error_message}")
+            if LOGGER: LOGGER.error(f"Processing marked as failed: {error_message}")
     
     def get_resume_summary(self):
         """Get a summary of what will be resumed."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             if not self.can_resume():
                 return None
                 
@@ -241,10 +264,10 @@ class ResumeManager:
     
     def cleanup_state_file(self):
         """Remove the state file (used when processing completes successfully)."""
-        with set_log_level(LOGGER, self.log_level):
+        with safe_set_log_level(LOGGER, self.log_level):
             try:
                 if self.state_file.exists():
                     self.state_file.unlink()
-                    LOGGER.debug(f"Cleaned up state file: {self.state_file}")
+                    if LOGGER: LOGGER.debug(f"Cleaned up state file: {self.state_file}")
             except OSError as e:
-                LOGGER.warning(f"Could not remove state file {self.state_file}: {e}")
+                if LOGGER: LOGGER.warning(f"Could not remove state file {self.state_file}: {e}")
